@@ -1,62 +1,118 @@
 version: 2.1
 
 commands:
-  setup_steps:
+  setup-executor:
+    steps:
+      - run:
+          name: Setup executor
+          command: |
+            apt-get -qq update
+            apt-get -q install -y git openssh-client curl ca-certificates make tar gzip
+            bash <(curl -fsSL https://get.docker.com)
+      - setup_remote_docker:
+          docker_layer_caching: true
+
+  setup-automation:
+    steps:
+      - run:
+          name: Setup automation
+          command: |
+            ./opt/readies/bin/getpy3
+            ./opt/system-setup.py
+
+  build-steps:
     parameters:
       platform:
         type: string
     steps:
       - checkout
+      - run:
+          name: Submodule checkout
+          command: git submodule update --init --recursive
       - restore_cache:
           keys:
           - v1-dependencies-{{ checksum "get_deps.sh" }}
           # If no exact match is found will get dependencies from source
+      - setup-automation
       - run:
           name: Install dependencies
           command: |
-            ./opt/readies/bin/getpy3
-            BREW_NO_UPDATE=1 ./opt/system-setup.py
-            # git clone git://github.com/antirez/redis.git --branch 6.0.1; (cd redis; make malloc=libc -j $(nproc); make install); redis-server --version
+            ./opt/readies/bin/getredis -v 6 --force
             ./get_deps.sh cpu
       - save_cache:
           paths:
             - deps
           key: build-dependencies-{{ checksum "get_deps.sh" }}
       - run:
-          name: Set up workspace
-          command: |
-            mkdir -p ~/workspace
-            chown `whoami` ~/workspace
-
-  test_steps:
-    parameters:
-      platform:
-        type: string
-    steps:
-      - checkout
-      - run:
           name: Build
           command: make -C opt all SHOW=1
       - run:
+          name: Unit Tests
+          command: |
+            make -C opt unit_tests SHOW=1
+          no_output_timeout: 5m
+      - run:
           name: Test
           command: |
-            mkdir -p ~/workspace/tests
             make -C opt test SHOW=1
           no_output_timeout: 20m
       - run:
           name: Package
-          command: make -C opt pack BRANCH="${CIRCLE_BRANCH//[^A-Za-z0-9._-]/_}" INTO=~/workspace/packages SHOW=1
+          command: |
+            make -C opt pack SHOW=1
+            (cd bin/artifacts; tar -cf snapshots-<<parameters.platform>>.tar snapshots/)
       - persist_to_workspace:
-          root: ~/workspace
+          root: bin/
           paths:
-            - 'packages/release/*.zip'
-            - 'packages/release/*.tgz'
-            - 'packages/branch/*.zip'
-            - 'packages/branch/*.tgz'
+            - artifacts/*.zip
+            - artifacts/*.tgz
+            - artifacts/*.tar
+      - store_artifacts:
+          path: tests/logs
+
+  platforms-build-steps:
+    steps:
+      - checkout
+      - run:
+          name: Relocate docker overlay2 dir
+          command: |
+            sudo systemctl stop docker
+            sudo mkdir -p /var2/lib/docker
+            sudo mv /var/lib/docker/overlay2 /var2/lib/docker
+            sudo mkdir /var/lib/docker/overlay2
+            sudo mount --bind /var2/lib/docker/overlay2 /var/lib/docker/overlay2
+            sudo systemctl start docker
+      - run:
+          name: Setup
+          command: |
+            git submodule update --init --recursive
+            ./opt/readies/bin/getpy3
+      - run:
+          name: Build for platform
+          command: |
+            docker login -u redisfab -p $DOCKER_REDISFAB_PWD
+            pushd opt/build/docker
+            for osnick in bionic xenial; do
+                make CPU=1 OSNICK=$osnick ARTIFACTS=1 VERBOSE=1
+                make GPU=1 OSNICK=$osnick ARTIFACTS=1 VERBOSE=1
+            done
+            popd > /dev/null
+            logstar=bin/artifacts/tests-logs-cpu.tgz
+            logsdir=tests/logs/cpu
+            mkdir -p $logsdir
+            if [[ -e $logstar ]]; then tar -C $logsdir -xzf $logstar; fi
+            (cd bin/artifacts; tar -cf snapshots.tar snapshots/)
+          no_output_timeout: 40m
+      - persist_to_workspace:
+          root: bin/
+          paths:
+            - artifacts/*.zip
+            - artifacts/*.tgz
+            - artifacts/*.tar
       - store_artifacts:
           path: test/logs
 
-  deploy:
+  deploy-steps:
     parameters:
       from:
         type: string
@@ -64,39 +120,58 @@ commands:
       - run:
           name: Deploy to S3
           command: |
-            aws s3 cp <<parameters.from>>/ s3://redismodules/$PACKAGE_NAME/ --acl public-read --recursive --exclude "*" --include "*.zip" --include "*.tgz"
+            du -ah --apparent-size artifacts/*
+            aws s3 cp artifacts/ s3://redismodules/$PACKAGE_NAME/ --acl public-read --recursive --exclude "*" --include "*.zip" --include "*.tgz"
 
 jobs:
-  build:
+  lint:
     docker:
-      - image: redisfab/rmbuilder:6.0.1-x64-buster
+      - image: redislabsmodules/llvm-toolset:latest
     steps:
-      - setup_steps:
+      - checkout
+      - run:
+          name: Submodule checkout
+          command: git submodule update --init --recursive
+      - setup-automation
+      - run:
+          name: lint
+          command: |
+            make -C opt lint
+
+  build-and-test:
+    docker:
+      - image: redisfab/rmbuilder:6.0.9-x64-buster
+    steps:
+      - build-steps:
           platform: debian
-      - test_steps:
-          platform: debian
+
+  platforms-build:
+    machine:
+      enabled: true
+      docker_layer_caching: true
+      resource_class: gpu.nvidia.small
+      image: ubuntu-1604-cuda-11.1:202012-01
+    steps:
+      - platforms-build-steps
 
   coverage:
     docker:
-      - image: redisfab/rmbuilder:6.0.1-x64-buster
+      - image: redisfab/rmbuilder:6.0.9-x64-buster
     steps:
       - checkout
+      - run:
+          name: Submodule checkout
+          command: git submodule update --init --recursive
       - restore_cache:
           keys:
           - build-dependencies-{{ checksum "get_deps.sh" }}
           # If no exact match is found will get dependencies from source
+      - setup-automation
       - run:
           name: Install dependencies
           command: |
-            ./opt/readies/bin/getpy3
-            ./opt/system-setup.py
-            # git clone git://github.com/antirez/redis.git --branch 6.0.1; cd redis; make malloc=libc -j $(nproc); make install; redis-server --version
+            ./opt/readies/bin/getredis -v 6 --valgrind --force
             ./get_deps.sh cpu
-      - run:
-          name: Set up workspace
-          command: |
-            mkdir -p ~/workspace
-            chown `whoami` ~/workspace
       - run:
           name: Build for coverage
           command: |
@@ -104,29 +179,62 @@ jobs:
       - run:
           name: Test with coverage
           command: |
-            make -C opt test SHOW=1 COV=1
+            make -C opt test SHOW=1 COV=1 CLUSTER=1
             make -C opt cov-upload
-          no_output_timeout: 20m
+          no_output_timeout: 30m
+
+  valgrind:
+    parameters:
+      test_args:
+        type: string
+        default: "CLUSTER=0 AOF=0"
+    docker:
+      - image: redisfab/rmbuilder:6.0.9-x64-buster
+    steps:
+      - checkout
+      - run:
+          name: Submodule checkout
+          command: git submodule update --init --recursive 
+      - restore_cache:
+          keys:
+          - build-dependencies-{{ checksum "get_deps.sh" }}
+          # If no exact match is found will get dependencies from source
+      - setup-automation
+      - run:
+          name: Install dependencies
+          command: |
+            ./opt/readies/bin/getredis -v 6 --valgrind --force
+            ./get_deps.sh cpu
+      - run:
+          name: Build for valgrind
+          command: |
+            make -C opt all VALGRIND=1 SHOW=1
+      - run:
+          name: Test with valgrind
+          command: |
+            make -C opt test VALGRIND=1 <<parameters.test_args>>
+          no_output_timeout: 120m
 
   build-macos:
     macos:
-      xcode: 11.1.0
+      xcode: 11.3.0
     steps:
       - run:
           name: Fix macOS Python installation
           command: |
             brew reinstall -f python2
-      - setup_steps:
-          platform: macosx
-      - test_steps:
+      - build-steps:
           platform: macosx
 
   build-multiarch-docker:
     machine:
       enabled: true
-      image: ubuntu-1604:201903-01
+      image: cimg/base:2020.01
     steps:
       - checkout
+      - run:
+          name: Submodule checkout
+          command: git submodule update --init --recursive
       - run:
           name: Checkout LFS
           command: |
@@ -143,17 +251,30 @@ jobs:
           name: Build
           command: |
             sudo docker login -u redisfab -p $DOCKER_REDISFAB_PWD
-            make -C opt/build/docker build
-            sudo make -C opt/build/docker publish
+            cd opt/build/docker
+            make build
+            sudo make publish
 
-  build-gpu:
+  build-and-test-gpu:
     machine:
       enabled: true
       docker_layer_caching: true
       resource_class: gpu.nvidia.small
-      image: ubuntu-1604-cuda-10.1:201909-23
+      image: ubuntu-1604-cuda-11.1:202012-01
     steps:
       - checkout
+      - run:
+          name: Submodule checkout
+          command: git submodule update --init --recursive
+      - run:
+          name: Relocate docker overlay2 dir
+          command: |
+            sudo systemctl stop docker
+            sudo mkdir -p /var2/lib/docker
+            sudo mv /var/lib/docker/overlay2 /var2/lib/docker
+            sudo mkdir /var/lib/docker/overlay2
+            sudo mount --bind /var2/lib/docker/overlay2 /var/lib/docker/overlay2
+            sudo systemctl start docker
       - run:
           name: Build
           command: |
@@ -161,82 +282,187 @@ jobs:
       - run:
           name: Test
           command: |
-            mkdir -p ~/workspace/tests
-            docker run --gpus all -v $HOME/workspace/tests:/build/test/logs -it --rm redisai-gpu:latest-x64-bionic-test
-          no_output_timeout: 30m
+            mkdir -p $HOME/tests
+            docker run --gpus all -v $HOME/tests:/build/tests/logs -it --rm redisai-gpu:latest-x64-bionic-test
+          no_output_timeout: 40m
       - store_artifacts:
-          path: ~/workspace/tests
+          path: tests/logs
 
-  deploy_package:
+  deploy-artifacts:
     parameters:
-      package:
+      location:
         type: string
     docker:
-      - image: redisfab/rmbuilder:6.0.1-x64-buster
+      - image: redisfab/rmbuilder:6.0.9-x64-buster
     steps:
       - attach_workspace:
-          at: ~/workspace
-      - deploy:
-          from: ~/workspace/packages/<<parameters.package>>
-      - store_artifacts:
-          path: ~/workspace/packages/<<parameters.package>>
+          at: workspace
+      - run:
+          name: Deploy to S3
+          command: |
+            cd "workspace/artifacts/<<parameters.location>>"
+            du -ah --apparent-size *
+            for f in *.zip snapshot/*.tgz; do
+              aws s3 cp $f s3://redismodules/$PACKAGE_NAME/<<parameters.location>>/ --acl public-read
+            done
+
+  deploy-snapshot:
+    docker:
+      - image: redisfab/rmbuilder:6.0.9-x64-buster
+    steps:
+      - attach_workspace:
+          at: workspace
+      - run:
+          name: Deploy Snapshots to S3
+          command: |
+            cd workspace/artifacts
+            for f in snapshots*.tar; do
+                echo "Extracting $f ..."
+                tar xf $f
+            done
+            echo "... done."
+            du -ah --apparent-size *
+            cd snapshots
+            for f in *.zip *.tgz; do
+              aws s3 cp --no-progress $f s3://redismodules/$PACKAGE_NAME/snapshots/ --acl public-read
+            done
+
+  deploy-release:
+    docker:
+      - image: redisfab/rmbuilder:6.0.9-x64-buster
+    steps:
+      - attach_workspace:
+          at: workspace
+      - run:
+          name: Deploy Releases to S3
+          command: |
+            cd workspace/artifacts
+            du -ah --apparent-size *
+            for f in *.zip *.tgz; do
+              aws s3 cp --no-progress $f s3://redismodules/$PACKAGE_NAME/ --acl public-read
+            done
+
+
+on-any-branch: &on-any-branch
+  filters:
+    branches:
+      only: /.*/
+    tags:
+      only: /.*/
+
+never: &never
+  filters:
+    branches:
+      ignore: /.*/
+    tags:
+      ignore: /.*/
+
+on-master: &on-master
+  filters:
+    branches:
+      only: master
+    tags:
+      ignore: /.*/
+
+on-integ-branch: &on-integ-branch
+  filters:
+    branches:
+      only:
+        - master
+        - /^\d+\.\d+.*$/
+    tags:
+      ignore: /.*/
+
+on-version-tags: &on-version-tags
+  filters:
+    branches:
+      ignore: /.*/
+    tags:
+      only: /^v[0-9].*/
+
+on-integ-and-version-tags: &on-integ-and-version-tags
+  filters:
+    branches:
+      only:
+        - master
+        - /^\d+\.\d+.*$/
+    tags:
+      only: /^v[0-9].*/
+
+
+after-linter: &after-linter
+  requires:
+    - lint
+
+after-build-and-test: &after-build-and-test
+  requires:
+    - build-and-test
+
+after-platform-builds: &after-platform-builds
+  requires:
+    - platforms-build
+
+platform-build-defs: &platform-build-defs
+  <<: *after-build-and-test
+  <<: *on-integ-and-version-tags
+  # <<: *on-any-branch # debugging
+
 
 workflows:
   version: 2
   build_and_package:
     jobs:
-      - build:
-          filters:
-            tags:
-              only: /.*/
+      - lint:
+          <<: *on-any-branch
+      - build-and-test:
+          <<: *on-any-branch
+          <<: *after-linter
+      - platforms-build:
+          <<: *platform-build-defs
       - coverage:
-          filters:
-            branches:
-              only: /.*/
-            tags:
-              only: /.*/
-      # - build-macos:
-      #     filters:
-      #       branches:
-      #         ignore: /.*/
-      #       tags:
-      #         only: /^v[0-9].*/
-      #- build-multiarch-docker:
-      #    filters:
-      #      tags:
-      #        only: /^v[0-9].*/
-      #      branches:
-      #        ignore: /.*/
-      - build-gpu:
-          filters:
-            tags:
-              only: /.*/
-      - deploy_package:
-          name: deploy_branch
-          package: branch
-          requires:
-            - build
+          context: common
+          <<: *on-any-branch
+          <<: *after-linter
+      - valgrind:
+          test_args: CLUSTER=0 AOF=0
+          <<: *on-any-branch
+          <<: *after-linter
+      - valgrind:
+          name: valgrind-cluster
+          test_args: GEN=0 AOF=0
+          <<: *on-integ-branch
+          <<: *after-linter
+      - valgrind:
+          name: valgrind-aof
+          test_args: GEN=0 CLUSTER=0
+          <<: *on-integ-branch
+          <<: *after-linter
+      - build-and-test-gpu:
+          <<: *on-any-branch
+          <<: *after-linter
+      - build-macos:
+          <<: *never # temporarily disabled
+          # <<: *on-version-tags
+      - build-multiarch-docker:
+          context: common
+          <<: *never # temporarily disabled
+          # <<: *on-version-tags
+      - deploy-snapshot:
+          context: common
+          <<: *after-platform-builds
+          <<: *on-integ-branch
+      - deploy-release:
+          context: common
+          <<: *after-platform-builds
+          <<: *on-version-tags
+
+  nightly:
+    triggers:
+      - schedule:
+          cron: "20 17 * * *"
           filters:
             branches:
               only: master
-      - deploy_package:
-          name: deploy_release
-          package: release
-          requires:
-            - build
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: '/^v[0-9].*/'
-
-  #nightly:
-  #  triggers:
-  #   - schedule:
-  #        cron: "20 17 * * *"
-  #        filters:
-  #           branches:
-  #             only:
-  #              - master
-  #  jobs:
-  #    - build-macos
+    jobs:
+      - build-macos:
+          <<: *never # temporarily disabled

@@ -16,6 +16,7 @@ if [[ $1 == --help || $1 == help ]]; then
 		Argument variables:
 		CPU=1              Get CPU dependencies
 		GPU=1              Get GPU dependencies
+		JETSON=1           Get Jetson Nano dependencies
 		VERBOSE=1          Print commands
 		FORCE=1            Download even if present
 		WITH_DLPACK=0      Skip dlpack
@@ -46,11 +47,13 @@ else
 	fi
 fi
 
+git submodule update --init --recursive || true
+
 OS=$(python3 $HERE/opt/readies/bin/platform --os)
 ARCH=$(python3 $HERE/opt/readies/bin/platform --arch)
 
 # avoid wget warnings on macOS
-[[ $OS == macosx ]] && export LC_ALL=en_US.UTF-8
+[[ $OS == macos ]] && export LC_ALL=en_US.UTF-8
 
 DEPS_DIR=$HERE/deps/$OS-$ARCH-$DEVICE
 mkdir -p ${DEPS_DIR}
@@ -67,13 +70,13 @@ MKL=mkl
 ONNXRUNTIME=onnxruntime
 
 ######################################################################################## DLPACK
-
+DLPACK_VERSION="v0.3"
 if [[ $WITH_DLPACK != 0 ]]; then
 	[[ $FORCE == 1 ]] && rm -rf $DLPACK
 
 	if [[ ! -d $DLPACK ]]; then
 		echo "Cloning dlpack ..."
-		git clone --depth 1 https://github.com/dmlc/dlpack.git $DLPACK
+		git clone --depth 1 --branch $DLPACK_VERSION https://github.com/dmlc/dlpack.git $DLPACK
 		echo "Done."
 	else
 		echo "dlpack is in place."
@@ -84,14 +87,13 @@ fi
 
 ################################################################################# LIBTENSORFLOW
 
-TF_VERSION="1.15.0"
+TF_VERSION="2.4.0"
 
 if [[ $WITH_TF != 0 ]]; then
 	[[ $FORCE == 1 ]] && rm -rf $LIBTENSORFLOW
 
 	if [[ ! -d $LIBTENSORFLOW ]]; then
 		echo "Installing TensorFlow ..."
-		
 		if [[ $OS == linux ]]; then
 			TF_OS="linux"
 			if [[ $GPU != 1 ]]; then
@@ -100,26 +102,20 @@ if [[ $WITH_TF != 0 ]]; then
 				TF_BUILD="gpu"
 			fi
 			if [[ $ARCH == x64 ]]; then
-				TF_VERSION=1.15.0
 				TF_ARCH=x86_64
 				
-				# special case for 1.15.0 as official version does not suport CUDA 10.1
-				if [[ $WITH_TF == S3 || $GPU == 1 ]]; then
-					LIBTF_URL_BASE=https://s3.amazonaws.com/redismodules/tensorflow
-				else
-					LIBTF_URL_BASE=https://storage.googleapis.com/tensorflow/libtensorflow
-				fi
+				LIBTF_URL_BASE=https://storage.googleapis.com/tensorflow/libtensorflow
 			elif [[ $ARCH == arm64v8 ]]; then
-				TF_VERSION=1.15.0
 				TF_ARCH=arm64
+				if [[ $JETSON == 1 ]]; then
+					TF_BUILD="gpu-jetson"
+				fi
 				LIBTF_URL_BASE=https://s3.amazonaws.com/redismodules/tensorflow
 			elif [[ $ARCH == arm32v7 ]]; then
-				TF_VERSION=1.15.0
 				TF_ARCH=arm
 				LIBTF_URL_BASE=https://s3.amazonaws.com/redismodules/tensorflow
 			fi
-		elif [[ $OS == macosx ]]; then
-			TF_VERSION=1.15.0
+		elif [[ $OS == macos ]]; then
 			TF_OS=darwin
 			TF_BUILD=cpu
 			TF_ARCH=x86_64
@@ -173,7 +169,7 @@ if [[ $WITH_TFLITE != 0 ]]; then
 			elif [[ $ARCH == arm32v7 ]]; then
 				TFLITE_ARCH=arm
 			fi
-		elif [[ $OS == macosx ]]; then
+		elif [[ $OS == macos ]]; then
 			TFLITE_OS=darwin
 			# TFLITE_BUILD=cpu
 			TFLITE_ARCH=x86_64
@@ -198,7 +194,7 @@ fi # WITH_TFLITE
 
 ###################################################################################### LIBTORCH
 
-PT_VERSION="1.5.0"
+PT_VERSION="1.7.1"
 
 if [[ $WITH_PT != 0 ]]; then
 	[[ $FORCE == 1 ]] && rm -rf $LIBTORCH
@@ -213,7 +209,11 @@ if [[ $WITH_PT != 0 ]]; then
 			if [[ $GPU != 1 ]]; then
 				PT_BUILD=cpu
 			else
-				PT_BUILD=cu101
+				if [[ $JETSON == 1 ]]; then
+					PT_BUILD=cu102-jetson
+				else
+					PT_BUILD=cu110
+				fi
 			fi
 			if [[ $ARCH == x64 ]]; then
 				PT_ARCH=x86_64
@@ -223,7 +223,7 @@ if [[ $WITH_PT != 0 ]]; then
 			elif [[ $ARCH == arm32v7 ]]; then
 				PT_ARCH=arm
 			fi
-		elif [[ $OS == macosx ]]; then
+		elif [[ $OS == macos ]]; then
 			PT_OS=macos
 			PT_ARCH=x86_64
 			PT_BUILD=cpu
@@ -251,7 +251,7 @@ if [[ $WITH_PT != 0 ]]; then
 		
 		echo "Done."
 	else
-		echo "librotch is in place."
+		echo "libtorch is in place."
 	fi
 else
 	echo "SKipping libtorch."
@@ -262,7 +262,7 @@ fi # WITH_PT
 if [[ ! -d mkl ]]; then
 	MKL_VERSION=0.18
 	MKL_BUNDLE_VER=2019.0.3.20190220
-	if [[ $OS == macosx ]]; then
+	if [[ $OS == macos ]]; then
 		echo "Installing MKL ..."
 
 		MKL_OS=mac
@@ -282,7 +282,7 @@ fi
 
 ################################################################################### ONNXRUNTIME
 
-ORT_VERSION="1.2.0"
+ORT_VERSION="1.6.0"
 
 if [[ $WITH_ORT != 0 ]]; then
 	[[ $FORCE == 1 ]] && rm -rf $ONNXRUNTIME
@@ -307,7 +307,7 @@ if [[ $WITH_ORT != 0 ]]; then
 				ORT_ARCH=arm
 				ORT_URL_BASE=https://s3.amazonaws.com/redismodules/onnxruntime
 			fi
-		elif [[ $OS == macosx ]]; then
+		elif [[ $OS == macos ]]; then
 			ORT_OS=osx
 			ORT_ARCH=x64
 			ORT_BUILD=""

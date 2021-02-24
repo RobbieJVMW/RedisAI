@@ -1,15 +1,14 @@
 [![GitHub issues](https://img.shields.io/github/release/RedisAI/RedisAI.svg?sort=semver)](https://github.com/RedisAI/RedisAI/releases/latest)
 [![CircleCI](https://circleci.com/gh/RedisAI/RedisAI/tree/master.svg?style=svg)](https://circleci.com/gh/RedisAI/RedisAI/tree/master)
 [![Docker Cloud Build Status](https://img.shields.io/docker/cloud/build/redisai/redisai.svg)](https://hub.docker.com/r/redisai/redisai/builds/)
-[![Forum](https://img.shields.io/badge/Forum-RedisAI-blue)](https://forum.redislabs.com/c/modules/redisai)
-[![Gitter](https://badges.gitter.im/RedisLabs/RedisAI.svg)](https://gitter.im/RedisLabs/RedisAI?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
 [![codecov](https://codecov.io/gh/RedisAI/RedisAI/branch/master/graph/badge.svg)](https://codecov.io/gh/RedisAI/RedisAI)
-
+[![Total alerts](https://img.shields.io/lgtm/alerts/g/RedisAI/RedisAI.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/RedisAI/RedisAI/alerts/)
 
 # RedisAI
+[![Forum](https://img.shields.io/badge/Forum-RedisAI-blue)](https://forum.redislabs.com/c/modules/redisai)
+[![Discord](https://img.shields.io/discord/697882427875393627?style=flat-square)](https://discord.gg/rTQm7UZ)
 
 A Redis module for serving tensors and executing deep learning models.
-Expect changes in the API and internals.
 
 ## Cloning
 If you want to run examples, make sure you have [git-lfs](https://git-lfs.github.com) installed when you clone.
@@ -47,7 +46,7 @@ Note that Redis config is located at `/usr/local/etc/redis/redis.conf` which can
 
 On the client, set the model
 ```sh
-redis-cli -x AI.MODELSET foo TF CPU INPUTS a b OUTPUTS c BLOB < test/test_data/graph.pb
+redis-cli -x AI.MODELSET foo TF CPU INPUTS a b OUTPUTS c BLOB < tests/test_data/graph.pb
 ```
 
 Then create the input tensors, run the computation graph and get the output tensor (see `load_model.sh`). Note the signatures:
@@ -69,6 +68,13 @@ redis-cli
 ```
 
 ## Building
+
+You should obtain the module's source code and submodule using git like so: 
+
+```sh
+git clone --recursive https://github.com/RedisAI/RedisAI
+```
+
 This will checkout and build and download the libraries for the backends (TensorFlow, PyTorch, ONNXRuntime) for your platform. Note that this requires CUDA 10.0 to be installed.
 
 ```sh
@@ -115,6 +121,7 @@ Some languages have client libraries that provide support for RedisAI's commands
 | JRedisAI | Java | BSD-3 | [RedisLabs](https://redislabs.com/) | [Github](https://github.com/RedisAI/JRedisAI) |
 | redisai-py | Python | BSD-3 | [RedisLabs](https://redislabs.com/) | [Github](https://github.com/RedisAI/redisai-py) |
 | redisai-go | Go | BSD-3 | [RedisLabs](https://redislabs.com/) | [Github](https://github.com/RedisAI/redisai-go) |
+| redisai-js | Typescript/Javascript | BSD-3 | [RedisLabs](https://redislabs.com/) | [Github](https://github.com/RedisAI/redisai-js) |
 
 ## Backend Dependancy
 
@@ -128,9 +135,10 @@ RedisAI currently supports PyTorch (libtorch), Tensorflow (libtensorflow), Tenso
 | 0.3.1   | 1.1.0   | 1.12.0     | None   | 0.4.0         |
 | 0.4.0   | 1.2.0   | 1.14.0     | None   | 0.5.0         |
 | 0.9.0   | 1.3.1   | 1.14.0     | 2.0.0  | 1.0.0         |
-| master  | 1.5.0   | 1.15.0     | 2.0.0  | 1.2.0         |
+| 1.0.0   | 1.5.0   | 1.15.0     | 2.0.0  | 1.2.0         |
+| master  | 1.7.0   | 1.15.0     | 2.0.0  | 1.2.0         |
 
-Note: Keras and TensorFlow 2.x are supported through graph freezing. See [this script](https://github.com/RedisAI/RedisAI/blob/master/test/test_data/tf2-minimal.py) to see how to export a frozen graph from Keras and TensorFlow 2.x. Note that a frozen graph will be executed using the TensorFlow 1.15 backend. Should any 2.0 ops be not supported on the 1.15 after freezing, please open an Issue.
+Note: Keras and TensorFlow 2.x are supported through graph freezing. See [this script](https://github.com/RedisAI/RedisAI/blob/master/tests/test_data/tf2-minimal.py) to see how to export a frozen graph from Keras and TensorFlow 2.x. Note that a frozen graph will be executed using the TensorFlow 1.15 backend. Should any 2.0 ops be not supported on the 1.15 after freezing, please open an Issue.
 
 ## Documentation
 
@@ -144,4 +152,4 @@ Got questions? Feel free to ask at the [RedisAI Forum](https://forum.redislabs.c
 
 Redis Source Available License Agreement - see [LICENSE](LICENSE)
 
-Copyright 2020, [Tensorwerk, Inc](https://tensorwerk.com) & [Redis Labs, Inc](https://redislabs.com)
+Copyright 2020, [Redis Labs, Inc](https://redislabs.com)

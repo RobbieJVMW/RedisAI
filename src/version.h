@@ -1,9 +1,13 @@
-#ifndef SRC_VERSION_H_
-#define SRC_VERSION_H_
+#pragma once
 
-#define RAI_ENC_VER 999999
+#define REDISAI_VERSION_MAJOR 99
+#define REDISAI_VERSION_MINOR 99
+#define REDISAI_VERSION_PATCH 99
+
+#define REDISAI_MODULE_VERSION                                                                     \
+    (REDISAI_VERSION_MAJOR * 10000 + REDISAI_VERSION_MINOR * 100 + REDISAI_VERSION_PATCH)
 
 /* API versions. */
 #define REDISAI_LLAPI_VERSION 1
 
-#endif /* SRC_VERSION_H_ */
+static const long long REDISAI_ENC_VER = 1;

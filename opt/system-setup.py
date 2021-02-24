@@ -2,10 +2,12 @@
 
 import sys
 import os
-from subprocess import Popen, PIPE
 import argparse
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "readies"))
+HERE = os.path.abspath(os.path.dirname(__file__))
+READIES = os.path.join(HERE, "readies")
+ROOT = os.path.abspath(os.path.join(HERE, ".."))
+sys.path.insert(0, READIES)
 import paella
 
 #----------------------------------------------------------------------------------------------
@@ -16,61 +18,69 @@ class RedisAISetup(paella.Setup):
 
     def common_first(self):
         self.install_downloaders()
-        self.setup_pip()
-        self.pip3_install("wheel virtualenv")
-        self.pip3_install("setuptools --upgrade")
+        self.pip_install("wheel")
 
-        if self.os == 'linux':
-            self.install("ca-certificates")
-        self.install("git cmake unzip wget patchelf awscli")
+        self.install("git unzip patchelf")
         self.install("coreutils") # for realpath
 
     def debian_compat(self):
+        self.install("gawk")
         self.install("build-essential")
-        self.install("python3-venv python3-psutil python3-networkx python3-numpy") # python3-skimage
+        self.install("libssl-dev")
+        self.install("python3-regex")
+        self.install("python3-psutil python3-networkx python3-numpy")
+        if self.platform.is_arm():
+            self.install("python3-dev") # python3-skimage
+        self.install("libmpich-dev libopenblas-dev") # for libtorch
         self.install_git_lfs_on_linux()
 
     def redhat_compat(self):
-        self.group_install("'Development Tools'")
         self.install("redhat-lsb-core")
+        self.run("%s/bin/enable-utf8" % READIES)
+
+        self.run("%s/bin/getgcc --modern" % READIES)
+        # self.install("llvm-toolset-7")
+
+        if self.arch == 'x64':
+            self.install_linux_gnu_tar()
 
         if not self.dist == "amzn":
             self.install("epel-release")
-            self.install("python36 python36-pip")
+            self.install("python3-devel libaec-devel")
             self.install("python36-psutil")
         else:
             self.run("amazon-linux-extras install epel", output_on_error=True)
-            self.install("python3 python3-devel")
-            self.pip3_install("psutil")
+            self.install("python3-devel")
+            self.pip_install("psutil")
 
         self.install_git_lfs_on_linux()
 
     def fedora(self):
         self.group_install("'Development Tools'")
-        self.install("python3-venv python3-psutil python3-networkx")
+        self.install("python3 python3-psutil python3-networkx")
         self.install_git_lfs_on_linux()
 
-    def macosx(self):
-        p = Popen('xcode-select -p', stdout=PIPE, close_fds=True, shell=True)
-        out, _ = p.communicate()
-        if out.splitlines() == []:
-            fatal("Xcode tools are not installed. Please run xcode-select --install.")
+    def linux_last(self):
+        self.install("valgrind")
 
+    def macos(self):
         self.install_gnu_utils()
         self.install("git-lfs")
         self.install("redis")
 
     def common_last(self):
-        self.run("python3 -m pip uninstall -y ramp-packer RLTest")
-        # redis-py-cluster should be installed from git due to redis-py dependency
-        self.pip3_install("--no-cache-dir git+https://github.com/Grokzen/redis-py-cluster.git@master")
-        self.pip3_install("--no-cache-dir git+https://github.com/RedisLabsModules/RLTest.git@master")
-        self.pip3_install("--no-cache-dir git+https://github.com/RedisLabs/RAMP@master")
+        self.run("%s/bin/getclang --format" % READIES)
+        if self.platform == "arm":
+            self.run("%s/bin/getcmake" % READIES)
+        else:
+            self.run("%s/bin/getcmake --no-repo" % READIES)
 
-        root = os.path.join(os.path.dirname(__file__), "..")
-        self.pip3_install("-r {}/test/test_requirements.txt".format(root))
+        self.run("{PYTHON} {READIES}/bin/getrmpytools".format(PYTHON=self.python, READIES=READIES))
 
-        self.pip3_install("mkdocs mkdocs-material mkdocs-extensions")
+        self.pip_install("-r %s/tests/flow/test_requirements.txt" % ROOT)
+
+        self.pip_install("awscli")
+        self.pip_install("mkdocs mkdocs-material mkdocs-extensions")
 
 #----------------------------------------------------------------------------------------------
 

@@ -2,9 +2,9 @@
 /deps/
 /build/
 /install*
-/test/venv/
+/tests/venv/
 logs/
-/test/logs/
+/tests/logs/
 .env/
 env*/
 .venv/
@@ -15,6 +15,9 @@ venv*/
 *.tgz
 *.tar.gz
 /VARIANT
+
+# Docs API reference 
+docs/api_reference.md
 
 ### Cmake auto tools
 cmake-build-debug

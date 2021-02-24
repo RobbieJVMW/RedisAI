@@ -3,6 +3,7 @@ PROJECT(RedisAI)
 
 # CMake modules should be included in ${PROJECT_SOURCE_DIR}/opt/cmake/modules
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/opt/cmake/modules)
+list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/opt/GoogleTest)
 
 # Set a default build type if none was specified
 set(default_build_type "Release")
@@ -23,6 +24,9 @@ ENDIF()
 #----------------------------------------------------------------------------------------------
 
 SET(CMAKE_CC_COMMON_FLAGS "-fPIC")
+IF (USE_PROFILE)
+    SET(CMAKE_CC_COMMON_FLAGS "${CMAKE_CC_COMMON_FLAGS} -g -ggdb -fno-omit-frame-pointer")
+ENDIF()
 
 IF (USE_COVERAGE)
     IF (NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -39,11 +43,14 @@ set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
 
 # Add -fno-omit-frame-pointer to avoid seeing incomplete stack traces
-set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g -ggdb -fno-omit-frame-pointer -DVALGRIND")
-set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -ggdb -fno-omit-frame-pointer -DVALGRIND")
+set(CMAKE_COMMON_FLAGS_DEBUG "-g -ggdb -fno-omit-frame-pointer -D_DEBUG -DVALGRIND -include \
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/common.h -I${CMAKE_CURRENT_SOURCE_DIR}/opt")
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} ${CMAKE_COMMON_FLAGS_DEBUG}")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} ${CMAKE_COMMON_FLAGS_DEBUG}")
 
 #----------------------------------------------------------------------------------------------
 
+option(PACKAGE_UNIT_TESTS "Build unit tests" ON)
 option(BUILD_TF "Build the TensorFlow backend" ON)
 option(BUILD_TFLITE "Build the TensorFlow Lite backend" ON)
 option(BUILD_ORT "Build the ONNXRuntime backend" ON)
@@ -307,3 +314,10 @@ ENDIF()
 IF (NOT ${installAbs} STREQUAL ${CMAKE_SOURCE_DIR}/install-${DEVICE})
     INSTALL_SYMLINK(${installAbs} ${CMAKE_SOURCE_DIR}/install-${DEVICE})
 ENDIF()
+
+
+if(PACKAGE_UNIT_TESTS)
+    enable_testing()
+    include(GoogleTest)
+    add_subdirectory(tests/unit)
+endif()
